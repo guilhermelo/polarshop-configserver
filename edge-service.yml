@@ -1,0 +1,89 @@
+spring:
+  redis:
+    connect-timeout: 2s
+    host: localhost
+    port: 6379
+    timeout: 1s
+    
+  cloud:
+    gateway:
+      httpclient:
+        # Tempo máximo para estabelecer uma conexão com o serviço de destino
+        connect-timeout: 2s
+        # Tempo máximo de espera para uma resposta do serviço de destino
+        response-timeout: 5s
+        pool:
+          type: elastic
+          # Tempo máximo de espera para obter uma conexão do pool
+          max-idle-time: 15s
+          # Tempo máximo de vida para conexões no pool
+          max-life-time: 60s
+      routes:
+        - id: catalog-route
+          uri: ${CATALOG_SERVICE_URL:http://localhost:9001}/books
+          predicates:
+            - Path=/books/**
+          # Define o filtro de Circuit Breaker para a rota do catálogo, com um fallback para lidar com falhas
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: catalogCircuitBreaker
+                fallbackUri: forward:/catalog-fallback
+        - id: order-route
+          uri: ${ORDER_SERVICE_URL:http://localhost:9002}/orders
+          predicates:
+            - Path=/orders/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: orderCircuitBreaker
+      default-filters:
+        - SaveSession # Garante que a sessão seja salva para cada requisição, permitindo o uso de dados de sessão em filtros subsequentes
+        - name: RequestRateLimiter
+          args:
+            redis-rate-limiter:
+              replenishRate: 10 # Número de tokens adicionados por segundo
+              burstCapacity: 20 # Capacidade máxima do bucket quando há picos de requests (número máximo de tokens)
+              requestedTokens: 1 # Número de tokens que cada requisição consome
+        - name: Retry
+          args:
+            retries: 3
+            methods: GET
+            series: SERVER_ERROR
+            exceptions: java.io.IOException, java.util.concurrent.TimeoutException
+            # Configura a estratégia de backoff para as tentativas de retry (firstBackoff * (factor ˆ n))
+            backoff:
+              first-backoff: 50ms
+              max-backoff: 500ms
+              factor: 2
+              basedOnPreviousValue: false
+  session:
+    store-type: redis
+    timeout: 10m
+    redis:
+      namespace: polar:edge
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        # Define o número de chamadas a serem registradas para calcular a taxa de falhas
+        slidingWindowSize: 20
+        # Define a quantidade de chamadas permitidas quando o circuito estiver em estado de meio-aberto
+        permittedNumberOfCallsInHalfOpenState: 5
+        # Define a taxa de falhas (em porcentagem) que fará com que o circuito seja aberto
+        failureRateThreshold: 50
+        # Define o tempo que o circuito permanecerá aberto antes de tentar uma nova chamada (ms)
+        waitDurationInOpenState: 15000
+  timelimiter:
+    configs:
+      default:
+        timeoutDuration: 5s
+logging:
+  level:
+    # Captures core circuit breaker logic and events
+    io.github.resilience4j: DEBUG
+    # Captures Spring Cloud's reactive wrapper activity
+    org.springframework.cloud.circuitbreaker: DEBUG
+#    org.springframework.cloud.gateway: DEBUG
+#    reactor.netty: DEBUG
