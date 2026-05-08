@@ -9,7 +9,7 @@ spring:
     gateway:
       httpclient:
         # Tempo máximo para estabelecer uma conexão com o serviço de destino
-        connect-timeout: 2s
+        connect-timeout: 2000
         # Tempo máximo de espera para uma resposta do serviço de destino
         response-timeout: 5s
         pool:
